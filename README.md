@@ -1,6 +1,6 @@
 # glukometr
 
-Read glucose meter data and open an HTML report in your browser.
+Read and manage glucose meter data via CLI or a local web UI.
 
 ## Supported devices
 
@@ -13,7 +13,7 @@ Read glucose meter data and open an HTML report in your browser.
 - [Bun](https://bun.sh)
 - macOS or Linux (Windows may work with serial/HID drivers installed)
 
-## Usage
+## Web UI
 
 1. Connect your glucose meter via USB.
 2. Wake the meter if needed (some models sleep until you interact with them).
@@ -21,10 +21,29 @@ Read glucose meter data and open an HTML report in your browser.
 
 ```bash
 bun install
+bun run dev
+```
+
+4. Open [http://localhost:3000](http://localhost:3000)
+
+The web UI lets you:
+
+- View device info (serial, firmware, patient name, clock)
+- Download and browse readings (glucose, ketones, insulin)
+- Set date/time on the device
+- Set patient name and ID
+
+Deleting readings or clearing device memory is **not supported** over USB on most meters (including the FreeStyle Neo).
+
+## CLI export
+
+For a one-shot HTML report:
+
+```bash
 bun run readings
 ```
 
-The script reads all glucose values from the first supported device it finds, writes `readings.html`, and opens it in your default browser.
+This reads all glucose values from the first supported device, writes `readings.html`, and opens it in your default browser.
 
 ## License
 

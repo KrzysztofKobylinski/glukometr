@@ -2,10 +2,16 @@ import { SerialPort } from "serialport";
 import { DiagnosticGold } from "./diagnostic-gold.ts";
 import { OptiumXido } from "./optium-xido.ts";
 import { listHidDevices } from "./abbott-hid.ts";
-import type { DeviceEntry, GlucoseReading, GlucometerDevice } from "./types.ts";
+import type {
+  DeviceEntry,
+  DeviceInfo,
+  GlucoseReading,
+  GlucometerDevice,
+  MeterRecord,
+} from "./types.ts";
 
 export { DeviceInvalid, DeviceNotConnected } from "./errors.ts";
-export type { GlucoseReading };
+export type { DeviceEntry, DeviceInfo, GlucoseReading, MeterRecord };
 
 const SERIAL_DEVICES: Array<{
   vendorId: string;
@@ -27,7 +33,7 @@ const SERIAL_DEVICES: Array<{
   },
 ];
 
-async function listDevices(): Promise<DeviceEntry[]> {
+export async function listDevices(): Promise<DeviceEntry[]> {
   const results: DeviceEntry[] = [];
 
   for (const port of await SerialPort.list()) {
@@ -60,10 +66,17 @@ async function listDevices(): Promise<DeviceEntry[]> {
   return results;
 }
 
-export async function readFromFirstDevice(): Promise<{
-  label: string;
-  readings: GlucoseReading[];
-}> {
+export function openDevice(entry: DeviceEntry): GlucometerDevice {
+  return entry.create(entry.path);
+}
+
+async function resolve<T>(value: Promise<T> | T): Promise<T> {
+  return await value;
+}
+
+export async function withFirstDevice<T>(
+  fn: (meter: GlucometerDevice, label: string) => Promise<T> | T,
+): Promise<T> {
   const devices = await listDevices();
   if (devices.length === 0) {
     throw new Error("No supported glucose meter found. Connect the device and try again.");
@@ -73,10 +86,72 @@ export async function readFromFirstDevice(): Promise<{
   const meter = create(path);
 
   try {
-    const readings = await meter.fetchData();
-    const glucose = readings.filter((reading) => reading.type === "G");
-    return { label, readings: glucose };
+    return await fn(meter, label);
   } finally {
     meter.close();
   }
+}
+
+export async function readFromFirstDevice(): Promise<{
+  label: string;
+  readings: GlucoseReading[];
+}> {
+  return withFirstDevice(async (meter, label) => {
+    const readings = await resolve(meter.fetchData());
+    const glucose = readings.filter((reading) => reading.type === "G");
+    return { label, readings: glucose };
+  });
+}
+
+export async function getDeviceInfoFromFirst(): Promise<DeviceInfo> {
+  return withFirstDevice(async (meter, label) => {
+    if (!meter.getInfo) {
+      return {
+        label,
+        serialNumber: "",
+        softwareVersion: "",
+        glucoseUnits: "unknown",
+        clockValid: false,
+      };
+    }
+    const info = await resolve(meter.getInfo());
+    return { ...info, label: info.label || label };
+  });
+}
+
+export async function fetchAllRecordsFromFirst(): Promise<{
+  label: string;
+  records: MeterRecord[];
+}> {
+  return withFirstDevice(async (meter, label) => {
+    if (meter.fetchAllRecords) {
+      const records = await resolve(meter.fetchAllRecords());
+      return { label, records };
+    }
+    const readings = await resolve(meter.fetchData());
+    const records: MeterRecord[] = readings.map((r) => ({
+      kind: "glucose" as const,
+      value: r.value,
+      date: r.date,
+    }));
+    return { label, records };
+  });
+}
+
+export async function setDateTimeOnFirst(date: Date): Promise<void> {
+  await withFirstDevice(async (meter) => {
+    if (!meter.setDateTime) {
+      throw new Error("This device does not support setting date and time.");
+    }
+    await resolve(meter.setDateTime(date));
+  });
+}
+
+export async function setPatientOnFirst(name: string, id?: string): Promise<void> {
+  await withFirstDevice(async (meter) => {
+    if (!meter.setPatient) {
+      throw new Error("This device does not support setting patient info.");
+    }
+    await resolve(meter.setPatient(name, id));
+  });
 }

@@ -18,3 +18,12 @@ export class DeviceInvalid extends GlucometerError {
     this.name = "DeviceInvalid";
   }
 }
+
+export class DeleteNotSupported extends GlucometerError {
+  constructor(
+    message = "This device does not support deleting readings over USB. Clear memory from the device menu instead.",
+  ) {
+    super(message);
+    this.name = "DeleteNotSupported";
+  }
+}

@@ -1,6 +1,13 @@
 import { SerialPort } from "serialport";
 import { DeviceInvalid, DeviceNotConnected } from "./errors.ts";
-import type { GlucoseReading, GlucometerDevice } from "./types.ts";
+import type {
+  DeviceInfo,
+  GlucoseReading,
+  GlucometerDevice,
+  MeterRecord,
+} from "./types.ts";
+
+const DEVICE_LABEL = "Diagnosis Diagnostic Gold";
 
 async function readByte(port: SerialPort): Promise<number> {
   const data = await readExact(port, 1);
@@ -65,6 +72,25 @@ export class DiagnosticGold implements GlucometerDevice {
     } catch (error) {
       throw new DeviceNotConnected(String(error));
     }
+  }
+
+  async fetchAllRecords(timeoutSec = 5): Promise<MeterRecord[]> {
+    const readings = await this.fetchData(timeoutSec);
+    return readings.map((r) => ({
+      kind: "glucose" as const,
+      value: r.value,
+      date: r.date,
+    }));
+  }
+
+  getInfo(): DeviceInfo {
+    return {
+      label: DEVICE_LABEL,
+      serialNumber: "",
+      softwareVersion: "",
+      glucoseUnits: "unknown",
+      clockValid: false,
+    };
   }
 
   async fetchData(timeoutSec = 5): Promise<GlucoseReading[]> {

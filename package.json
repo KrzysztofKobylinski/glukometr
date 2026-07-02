@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "readings": "bun run view-readings.ts"
+    "readings": "bun run view-readings.ts",
+    "dev": "bun run server.ts"
   },
   "dependencies": {
     "@serialport/parser-readline": "^13.0.0",

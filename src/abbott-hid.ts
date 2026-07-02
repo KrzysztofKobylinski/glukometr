@@ -1,9 +1,15 @@
 import HID from "node-hid";
 import { DeviceInvalid, DeviceNotConnected, GlucometerError } from "./errors.ts";
-import type { GlucoseReading, GlucometerDevice } from "./types.ts";
+import type {
+  DeviceInfo,
+  GlucoseReading,
+  GlucometerDevice,
+  MeterRecord,
+} from "./types.ts";
 
 const ABBOTT_VENDOR_ID = 0x1a61;
 const PRECISION_NEO_PRODUCT_ID = 0x3850;
+const DEVICE_LABEL = "FreeStyle Precision Neo / Optium Neo";
 
 const INIT_COMMAND = 0x01;
 const INIT_RESPONSE = 0x71;
@@ -18,6 +24,16 @@ const MULTIRECORDS_FORMAT =
   /^(?<message>.+\r\n)(?<count>[0-9]+),(?<checksum>[0-9A-F]{8})\r\n$/s;
 
 const GLUCOSE_RECORD_TYPE = "7";
+const KETONE_RECORD_TYPE = "9";
+const INSULIN_RECORD_TYPE = "10";
+
+const INSULIN_TYPE_LABELS: Record<string, string> = {
+  "0": "Morning long-acting",
+  "1": "Breakfast short-acting",
+  "2": "Lunch short-acting",
+  "3": "Evening long-acting",
+  "4": "Dinner short-acting",
+};
 
 class HidSessionError extends GlucometerError {
   constructor(message: string) {
@@ -37,6 +53,33 @@ function verifyChecksum(message: Buffer, expectedChecksumHex: string): void {
       `Invalid checksum, expected ${expected}, calculated ${calculated}`,
     );
   }
+}
+
+function parseRecordDate(record: string[]): Date {
+  const month = Number(record[2]);
+  const day = Number(record[3]);
+  const year = Number(record[4]);
+  const hour = Number(record[5]);
+  const minute = Number(record[6]);
+  return new Date(2000 + year, month - 1, day, hour, minute);
+}
+
+function parseGlucoseUnits(value: string): DeviceInfo["glucoseUnits"] {
+  if (value === "1") return "mg/dL";
+  if (value === "0") return "mmol/L";
+  return "unknown";
+}
+
+function parseClockFields(dateLine: string, timeLine: string): { clockValid: boolean; date?: Date } {
+  const [month, day, year] = dateLine.split(",").map(Number);
+  const [hour, minute] = timeLine.split(",").map(Number);
+  if ([month, day, year, hour, minute].some((v) => v === 255 || Number.isNaN(v))) {
+    return { clockValid: false };
+  }
+  return {
+    clockValid: true,
+    date: new Date(2000 + year, month - 1, day, hour, minute),
+  };
 }
 
 class AbbottHidSession {
@@ -106,7 +149,7 @@ class AbbottHidSession {
     }
   }
 
-  private sendTextCommandRaw(command: Buffer): Buffer {
+  sendTextCommandRaw(command: Buffer): Buffer {
     this.sendCommand(TEXT_MESSAGE_TYPE, command);
 
     let fullContent = Buffer.alloc(0);
@@ -137,6 +180,10 @@ class AbbottHidSession {
     }
 
     return message;
+  }
+
+  queryText(command: string): string {
+    return this.sendTextCommandRaw(Buffer.from(command)).toString("ascii").trim();
   }
 
   queryMultirecord(command: Buffer): string[][] {
@@ -184,6 +231,34 @@ function parseCsvLine(line: string): string[] {
   return fields;
 }
 
+function parseMeterRecord(record: string[]): MeterRecord | null {
+  if (!record.length) return null;
+
+  const date = parseRecordDate(record);
+
+  if (record[0] === GLUCOSE_RECORD_TYPE) {
+    const valueText = record[8];
+    if (valueText === "HI" || valueText === "LO") return null;
+    return { kind: "glucose", value: Number(valueText), date };
+  }
+
+  if (record[0] === KETONE_RECORD_TYPE) {
+    return { kind: "ketone", valueMgDl: Number(record[8]), date };
+  }
+
+  if (record[0] === INSULIN_RECORD_TYPE) {
+    const insulinType = INSULIN_TYPE_LABELS[record[8]] ?? `Type ${record[8]}`;
+    return {
+      kind: "insulin",
+      units: Number(record[9]),
+      insulinType,
+      date,
+    };
+  }
+
+  return null;
+}
+
 export class FreeStylePrecisionNeo implements GlucometerDevice {
   private session: AbbottHidSession;
 
@@ -197,33 +272,67 @@ export class FreeStylePrecisionNeo implements GlucometerDevice {
   }
 
   fetchData(): GlucoseReading[] {
-    const readings: GlucoseReading[] = [];
+    return this.fetchAllRecords()
+      .filter((r): r is Extract<MeterRecord, { kind: "glucose" }> => r.kind === "glucose")
+      .map((r) => ({ type: "G" as const, value: r.value, date: r.date }));
+  }
+
+  fetchAllRecords(): MeterRecord[] {
+    const records: MeterRecord[] = [];
 
     for (const record of this.session.queryMultirecord(Buffer.from("$result?"))) {
-      if (!record.length || record[0] !== GLUCOSE_RECORD_TYPE) {
-        continue;
-      }
-
-      const valueText = record[8];
-      if (valueText === "HI" || valueText === "LO") {
-        continue;
-      }
-
-      const month = Number(record[2]);
-      const day = Number(record[3]);
-      const year = Number(record[4]);
-      const hour = Number(record[5]);
-      const minute = Number(record[6]);
-      const value = Number(valueText);
-
-      readings.push({
-        type: "G",
-        value,
-        date: new Date(2000 + year, month - 1, day, hour, minute),
-      });
+      const parsed = parseMeterRecord(record);
+      if (parsed) records.push(parsed);
     }
 
-    return readings;
+    return records;
+  }
+
+  getInfo(): DeviceInfo {
+    const softwareVersion = this.session.queryText("$swver?");
+    const serialNumber = this.session.queryText("$serlnum?");
+    const glucoseUnits = parseGlucoseUnits(this.session.queryText("$gunits?"));
+    const marketLevel = this.session.queryText("$marketlev?");
+    const patientName = this.session.queryText("$ptname?");
+    const patientId = this.session.queryText("$ptid?");
+    const clock = parseClockFields(
+      this.session.queryText("$date?"),
+      this.session.queryText("$time?"),
+    );
+
+    return {
+      label: DEVICE_LABEL,
+      serialNumber,
+      softwareVersion,
+      glucoseUnits,
+      marketLevel,
+      patientName: patientName || undefined,
+      patientId: patientId || undefined,
+      clockValid: clock.clockValid,
+      date: clock.date,
+    };
+  }
+
+  setDateTime(date: Date): void {
+    const month = date.getMonth() + 1;
+    const day = date.getDate();
+    const year = date.getFullYear() % 100;
+    const hour = date.getHours();
+    const minute = date.getMinutes();
+
+    this.session.sendTextCommandRaw(
+      Buffer.from(`$date,${month},${day},${year}`),
+    );
+    this.session.sendTextCommandRaw(
+      Buffer.from(`$time,${hour},${minute}`),
+    );
+  }
+
+  setPatient(name: string, id?: string): void {
+    this.session.sendTextCommandRaw(Buffer.from(`$ptname,${name}`));
+    if (id !== undefined) {
+      this.session.sendTextCommandRaw(Buffer.from(`$ptid,${id}`));
+    }
   }
 
   close(): void {
@@ -231,17 +340,17 @@ export class FreeStylePrecisionNeo implements GlucometerDevice {
   }
 }
 
-type DeviceEntry = {
+type HidDeviceEntry = {
   path: string;
   create: (path: string) => GlucometerDevice;
 };
 
-export function listHidDevices(): DeviceEntry[] {
-  const supported = new Map<number, DeviceEntry["create"]>([
+export function listHidDevices(): HidDeviceEntry[] {
+  const supported = new Map<number, HidDeviceEntry["create"]>([
     [PRECISION_NEO_PRODUCT_ID, (path) => new FreeStylePrecisionNeo(path)],
   ]);
 
-  const results: DeviceEntry[] = [];
+  const results: HidDeviceEntry[] = [];
 
   for (const dev of HID.devices()) {
     if (dev.vendorId !== ABBOTT_VENDOR_ID || !dev.path) {

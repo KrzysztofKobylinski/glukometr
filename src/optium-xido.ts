@@ -1,7 +1,14 @@
 import { SerialPort } from "serialport";
 import { ReadlineParser } from "@serialport/parser-readline";
 import { DeviceInvalid, DeviceNotConnected } from "./errors.ts";
-import type { GlucoseReading, GlucometerDevice } from "./types.ts";
+import type {
+  DeviceInfo,
+  GlucoseReading,
+  GlucometerDevice,
+  MeterRecord,
+} from "./types.ts";
+
+const DEVICE_LABEL = "Abbott Optium Xido";
 
 const MONTHS: Record<string, number> = {
   Jan: 0,
@@ -18,15 +25,35 @@ const MONTHS: Record<string, number> = {
   Dec: 11,
 };
 
+const MONTH_NAMES = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
 function parseReadingDate(parts: string[]): Date {
   const [month, day, year, time] = parts;
-  const monthIndex = MONTHS[month];
+  const monthIndex = MONTHS[month.trim()];
   if (monthIndex === undefined) {
     throw new DeviceInvalid(`Unknown month: ${month}`);
   }
 
   const [hour, minute] = time.split(":").map(Number);
   return new Date(Number(year), monthIndex, Number(day), hour, minute);
+}
+
+function parseColqClock(line: string): { clockValid: boolean; date?: Date } {
+  const match = line.match(/^Clock:\s+(\w+)\s+(\d+)\s+(\d+)\s+(\d+:\d+:\d+)/);
+  if (!match) return { clockValid: false };
+
+  const [, month, day, year, time] = match;
+  const monthIndex = MONTHS[month];
+  if (monthIndex === undefined) return { clockValid: false };
+
+  const [hour, minute, second] = time.split(":").map(Number);
+  return {
+    clockValid: true,
+    date: new Date(Number(year), monthIndex, Number(day), hour, minute, second),
+  };
 }
 
 export class OptiumXido implements GlucometerDevice {
@@ -53,6 +80,13 @@ export class OptiumXido implements GlucometerDevice {
   }
 
   async fetchData(): Promise<GlucoseReading[]> {
+    const records = await this.fetchAllRecords();
+    return records
+      .filter((r): r is Extract<MeterRecord, { kind: "glucose" }> => r.kind === "glucose")
+      .map((r) => ({ type: "G" as const, value: r.value, date: r.date }));
+  }
+
+  async fetchAllRecords(): Promise<MeterRecord[]> {
     const resp = await this.command("$xmem");
 
     if (resp[0] !== "") {
@@ -61,18 +95,56 @@ export class OptiumXido implements GlucometerDevice {
 
     const readingsCount = Number(resp[4]);
     const rawDataset = resp.slice(5, 5 + readingsCount);
-    const readings: GlucoseReading[] = [];
+    const records: MeterRecord[] = [];
 
     for (const reading of rawDataset) {
-      const [value, month, day, year, time, readingType] = reading.split(" ");
-      readings.push({
-        type: readingType as "G",
-        value: Number(value),
-        date: parseReadingDate([month, day, year, time]),
-      });
+      const parts = reading.split(" ");
+      const [valueText, month, day, year, time, readingType] = parts;
+      const date = parseReadingDate([month, day, year, time]);
+
+      if (readingType === "G") {
+        records.push({ kind: "glucose", value: Number(valueText), date });
+      } else if (readingType === "K") {
+        records.push({ kind: "ketone", valueMgDl: Number(valueText), date });
+      }
     }
 
-    return readings;
+    return records;
+  }
+
+  async getInfo(): Promise<DeviceInfo> {
+    const resp = await this.command("$colq");
+    const text = resp.join("\n");
+
+    const serialMatch = text.match(/S\/N:\s+(\S+)/);
+    const versionMatch = text.match(/Ver:\s+(\S+)\s+(\S+)/);
+    const clockLine = resp.find((line) => line.startsWith("Clock:")) ?? "";
+    const marketMatch = text.match(/Market:\s+(\S+)\s+(\S+)/);
+    const clock = parseColqClock(clockLine);
+
+    const unitText = versionMatch?.[2] ?? "";
+    const glucoseUnits: DeviceInfo["glucoseUnits"] =
+      unitText === "MMOL" ? "mmol/L" : unitText ? "mg/dL" : "unknown";
+
+    return {
+      label: DEVICE_LABEL,
+      serialNumber: serialMatch?.[1] ?? "",
+      softwareVersion: versionMatch?.[1] ?? "",
+      glucoseUnits,
+      marketLevel: marketMatch ? `${marketMatch[1]},${marketMatch[2]}` : undefined,
+      clockValid: clock.clockValid,
+      date: clock.date,
+    };
+  }
+
+  async setDateTime(date: Date): Promise<void> {
+    const month = MONTH_NAMES[date.getMonth()];
+    const day = date.getDate();
+    const year = date.getFullYear() % 100;
+    const hour = date.getHours();
+    const minute = date.getMinutes();
+
+    await this.command(`$tim,${month},${day},${year},${hour},${minute}`);
   }
 
   close(): void {
