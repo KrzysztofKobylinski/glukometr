@@ -3,45 +3,45 @@
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { writeFile } from "node:fs/promises";
+import {
+  DeviceInvalid,
+  DeviceNotConnected,
+  readFromFirstDevice,
+  type GlucoseReading,
+} from "./src/glucolib.ts";
 
 const ROOT = import.meta.dir;
-const GENERATOR = join(ROOT, "glucosetracker_gen");
 const OUTPUT = join(ROOT, "readings.html");
 
-type Reading = {
+type DisplayReading = {
   value: number;
-  category: string;
   date: string;
   time: string;
-  notes: string;
 };
 
-function parseCsvLine(line: string): string[] {
-  const fields: string[] = [];
-  let i = 0;
+function formatReadingDate(date: Date): { date: string; time: string } {
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const year = date.getFullYear();
 
-  while (i < line.length) {
-    if (line[i] !== '"') break;
-    const end = line.indexOf('"', i + 1);
-    fields.push(line.slice(i + 1, end));
-    i = end + 2;
-  }
+  let hours = date.getHours();
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const ampm = hours >= 12 ? "PM" : "AM";
+  hours = hours % 12 || 12;
 
-  return fields;
+  return {
+    date: `${month}/${day}/${year}`,
+    time: `${String(hours).padStart(2, "0")}:${minutes} ${ampm}`,
+  };
 }
 
-function parseCsv(text: string): Reading[] {
-  const lines = text.trim().split("\n");
-  if (lines.length < 2) return [];
-
-  return lines.slice(1).map((line) => {
-    const [value, category, date, time, notes] = parseCsvLine(line);
+function toDisplayReadings(readings: GlucoseReading[]): DisplayReading[] {
+  return readings.map((reading) => {
+    const formatted = formatReadingDate(reading.date);
     return {
-      value: Number(value),
-      category,
-      date,
-      time,
-      notes,
+      value: reading.value,
+      date: formatted.date,
+      time: formatted.time,
     };
   });
 }
@@ -60,7 +60,7 @@ function escapeHtml(text: string): string {
     .replaceAll('"', "&quot;");
 }
 
-function buildHtml(readings: Reading[]): string {
+function buildHtml(deviceLabel: string, readings: DisplayReading[]): string {
   const values = readings.map((r) => r.value);
   const count = readings.length;
   const average =
@@ -78,7 +78,6 @@ function buildHtml(readings: Reading[]): string {
         <td class="value ${glucoseClass(reading.value)}">${reading.value}</td>
         <td>${escapeHtml(reading.date)}</td>
         <td>${escapeHtml(reading.time)}</td>
-        <td>${escapeHtml(reading.notes)}</td>
       </tr>`,
     )
     .join("");
@@ -205,7 +204,7 @@ function buildHtml(readings: Reading[]): string {
 <body>
   <main>
     <h1>Glucose Readings</h1>
-    <p class="meta">Exported ${escapeHtml(exportedAt)} · ${count} readings</p>
+    <p class="meta">${escapeHtml(deviceLabel)} · Exported ${escapeHtml(exportedAt)} · ${count} readings</p>
 
     <section class="stats">
       <div class="stat">
@@ -229,11 +228,10 @@ function buildHtml(readings: Reading[]): string {
             <th>Value (mg/dL)</th>
             <th>Date</th>
             <th>Time</th>
-            <th>Notes</th>
           </tr>
         </thead>
         <tbody>
-          ${rows || '<tr><td colspan="4">No readings found.</td></tr>'}
+          ${rows || '<tr><td colspan="3">No readings found.</td></tr>'}
         </tbody>
       </table>
     </section>
@@ -246,33 +244,6 @@ function buildHtml(readings: Reading[]): string {
   </main>
 </body>
 </html>`;
-}
-
-async function runGenerator(): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(GENERATOR, [], {
-      cwd: ROOT,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    let stdout = "";
-    let stderr = "";
-
-    proc.stdout.on("data", (chunk) => {
-      stdout += chunk;
-    });
-    proc.stderr.on("data", (chunk) => {
-      stderr += chunk;
-    });
-
-    proc.on("close", (code) => {
-      if (code !== 0) {
-        reject(new Error(stderr.trim() || `glucosetracker_gen exited with ${code}`));
-        return;
-      }
-      resolve(stdout);
-    });
-  });
 }
 
 async function openInBrowser(path: string): Promise<void> {
@@ -295,18 +266,24 @@ async function openInBrowser(path: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  console.log("Reading glucose meter...");
-  const csv = await runGenerator();
-  const readings = parseCsv(csv);
+  console.log("Looking for glucose meter...");
+  const { label, readings } = await readFromFirstDevice();
+  const displayReadings = toDisplayReadings(readings);
 
-  const html = buildHtml(readings);
+  const html = buildHtml(label, displayReadings);
   await writeFile(OUTPUT, html, "utf8");
 
-  console.log(`Wrote ${readings.length} readings to ${OUTPUT}`);
+  console.log(`Read ${readings.length} readings from ${label}`);
+  console.log(`Wrote report to ${OUTPUT}`);
   await openInBrowser(OUTPUT);
 }
 
 main().catch((error) => {
+  if (error instanceof DeviceNotConnected || error instanceof DeviceInvalid) {
+    console.error(
+      "Make sure your device is connected and awake (try replugging the cable).",
+    );
+  }
   console.error(error instanceof Error ? error.message : error);
   process.exit(1);
 });
