@@ -31,7 +31,7 @@ The web UI lets you:
 - Download and browse readings (glucose, ketones, insulin)
 - Set date/time on the device
 - Set patient name and ID
-- Attempt to delete readings (supported on some meters; FreeStyle Neo does not support this over USB)
+- Hide readings locally (they remain on the meter)
 
 ## CLI export
 

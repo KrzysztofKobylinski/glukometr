@@ -1,12 +1,6 @@
 import HID from "node-hid";
-import { DeleteNotSupported, DeviceInvalid, DeviceNotConnected, GlucometerError } from "./errors.ts";
-import {
-  deleteAllCommands,
-  deleteOneCommands,
-  tryTextCommand,
-} from "./delete-commands.ts";
+import { DeviceInvalid, DeviceNotConnected, GlucometerError } from "./errors.ts";
 import type {
-  DeviceCapabilities,
   DeviceInfo,
   GlucoseReading,
   GlucometerDevice,
@@ -192,18 +186,6 @@ class AbbottHidSession {
     return this.sendTextCommandRaw(Buffer.from(command)).toString("ascii").trim();
   }
 
-  tryTextCommand(command: string): boolean {
-    try {
-      this.sendTextCommandRaw(Buffer.from(command));
-      return true;
-    } catch (error) {
-      if (error instanceof DeviceInvalid) {
-        return false;
-      }
-      throw error;
-    }
-  }
-
   queryMultirecord(command: Buffer): string[][] {
     const message = this.sendTextCommandRaw(command);
     if (message.equals(Buffer.from("Log Empty\r\n"))) {
@@ -331,7 +313,6 @@ export class FreeStylePrecisionNeo implements GlucometerDevice {
       patientId: patientId || undefined,
       clockValid: clock.clockValid,
       date: clock.date,
-      capabilities: this.getCapabilities(),
     };
   }
 
@@ -354,32 +335,6 @@ export class FreeStylePrecisionNeo implements GlucometerDevice {
     this.session.sendTextCommandRaw(Buffer.from(`$ptname,${name}`));
     if (id !== undefined) {
       this.session.sendTextCommandRaw(Buffer.from(`$ptid,${id}`));
-    }
-  }
-
-  getCapabilities(): DeviceCapabilities {
-    return { deleteAll: false, deleteOne: false };
-  }
-
-  deleteAllRecords(): void {
-    const ok = tryTextCommand(
-      (command) => this.session.tryTextCommand(command),
-      deleteAllCommands(),
-    );
-    if (!ok) {
-      throw new DeleteNotSupported();
-    }
-  }
-
-  deleteRecord(id: number, recordType: number): void {
-    const ok = tryTextCommand(
-      (command) => this.session.tryTextCommand(command),
-      deleteOneCommands(id, recordType),
-    );
-    if (!ok) {
-      throw new DeleteNotSupported(
-        "This device does not support deleting individual readings over USB.",
-      );
     }
   }
 

@@ -9,8 +9,8 @@ import type {
   MeterRecord,
 } from "./types.ts";
 
-export { DeleteNotSupported, DeviceInvalid, DeviceNotConnected } from "./errors.ts";
-export type { DeviceCapabilities, DeviceEntry, DeviceInfo, GlucoseReading, MeterRecord };
+export { DeviceInvalid, DeviceNotConnected } from "./errors.ts";
+export type { DeviceEntry, DeviceInfo, GlucoseReading, MeterRecord };
 
 const SERIAL_DEVICES: Array<{
   vendorId: string;
@@ -108,9 +108,36 @@ export async function getDeviceInfoFromFirst(): Promise<DeviceInfo> {
       };
     }
     const info = await resolve(meter.getInfo());
-    const capabilities =
-      meter.getCapabilities?.() ?? info.capabilities ?? { deleteAll: false, deleteOne: false };
-    return { ...info, label: info.label || label, capabilities };
+    return { ...info, label: info.label || label };
+  });
+}
+
+export async function fetchSessionFromFirst(): Promise<{
+  label: string;
+  serialNumber: string;
+  records: MeterRecord[];
+}> {
+  return withFirstDevice(async (meter, label) => {
+    let serialNumber = label;
+    if (meter.getInfo) {
+      const info = await resolve(meter.getInfo());
+      serialNumber = info.serialNumber || label;
+    }
+
+    if (meter.fetchAllRecords) {
+      const records = await resolve(meter.fetchAllRecords());
+      return { label, serialNumber, records };
+    }
+
+    const readings = await resolve(meter.fetchData());
+    const records: MeterRecord[] = readings.map((r, index) => ({
+      id: index + 1,
+      recordType: 7,
+      kind: "glucose" as const,
+      value: r.value,
+      date: r.date,
+    }));
+    return { label, serialNumber, records };
   });
 }
 
@@ -148,23 +175,5 @@ export async function setPatientOnFirst(name: string, id?: string): Promise<void
       throw new Error("This device does not support setting patient info.");
     }
     await resolve(meter.setPatient(name, id));
-  });
-}
-
-export async function deleteAllRecordsFromFirst(): Promise<void> {
-  await withFirstDevice(async (meter) => {
-    if (!meter.deleteAllRecords) {
-      throw new Error("This device does not support deleting readings.");
-    }
-    await resolve(meter.deleteAllRecords());
-  });
-}
-
-export async function deleteRecordFromFirst(id: number, recordType: number): Promise<void> {
-  await withFirstDevice(async (meter) => {
-    if (!meter.deleteRecord) {
-      throw new Error("This device does not support deleting readings.");
-    }
-    await resolve(meter.deleteRecord(id, recordType));
   });
 }

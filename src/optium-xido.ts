@@ -1,9 +1,7 @@
 import { SerialPort } from "serialport";
 import { ReadlineParser } from "@serialport/parser-readline";
-import { DeleteNotSupported, DeviceInvalid, DeviceNotConnected } from "./errors.ts";
-import { deleteAllCommands } from "./delete-commands.ts";
+import { DeviceInvalid, DeviceNotConnected } from "./errors.ts";
 import type {
-  DeviceCapabilities,
   DeviceInfo,
   GlucoseReading,
   GlucometerDevice,
@@ -138,39 +136,7 @@ export class OptiumXido implements GlucometerDevice {
       marketLevel: marketMatch ? `${marketMatch[1]},${marketMatch[2]}` : undefined,
       clockValid: clock.clockValid,
       date: clock.date,
-      capabilities: this.getCapabilities(),
     };
-  }
-
-  getCapabilities(): DeviceCapabilities {
-    return { deleteAll: false, deleteOne: false };
-  }
-
-  async deleteAllRecords(): Promise<void> {
-    const ok = await this.tryCommands(deleteAllCommands());
-    if (!ok) {
-      throw new DeleteNotSupported();
-    }
-  }
-
-  async deleteRecord(_id: number, _recordType: number): Promise<void> {
-    throw new DeleteNotSupported(
-      "This device does not support deleting individual readings over USB.",
-    );
-  }
-
-  private async tryCommands(commands: string[]): Promise<boolean> {
-    for (const command of commands) {
-      try {
-        const resp = await this.command(command);
-        if (resp.some((line) => line.includes("CMD OK"))) {
-          return true;
-        }
-      } catch {
-        continue;
-      }
-    }
-    return false;
   }
 
   async setDateTime(date: Date): Promise<void> {

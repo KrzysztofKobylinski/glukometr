@@ -2,12 +2,14 @@
 
 import { join } from "node:path";
 import {
-  DeleteNotSupported,
+  clearHidden,
+  getHiddenHashes,
+  hideHashes,
+} from "./src/hidden-readings.ts";
+import {
   DeviceInvalid,
   DeviceNotConnected,
-  deleteAllRecordsFromFirst,
-  deleteRecordFromFirst,
-  fetchAllRecordsFromFirst,
+  fetchSessionFromFirst,
   getDeviceInfoFromFirst,
   listDevices,
   setDateTimeOnFirst,
@@ -15,6 +17,7 @@ import {
   type DeviceInfo,
   type MeterRecord,
 } from "./src/glucolib.ts";
+import { hashReading } from "./src/reading-hash.ts";
 
 const ROOT = import.meta.dir;
 const PUBLIC_DIR = join(ROOT, "public");
@@ -46,9 +49,10 @@ function serializeInfo(info: DeviceInfo) {
   };
 }
 
-function serializeRecord(record: MeterRecord) {
+async function serializeRecord(serial: string, record: MeterRecord) {
   return {
     ...record,
+    hash: await hashReading(serial, record),
     date: record.date.toISOString(),
     valueMmolL:
       record.kind === "ketone"
@@ -68,7 +72,9 @@ async function handleApiInfo(): Promise<Response> {
   return withDeviceLock(async () => {
     try {
       const info = await getDeviceInfoFromFirst();
-      return json(serializeInfo(info));
+      const serial = info.serialNumber || info.label;
+      const hiddenCount = (await getHiddenHashes(serial)).size;
+      return json({ ...serializeInfo(info), hiddenCount });
     } catch (e) {
       return mapDeviceError(e);
     }
@@ -80,21 +86,101 @@ async function handleApiReadings(url: URL): Promise<Response> {
 
   return withDeviceLock(async () => {
     try {
-      const { label, records } = await fetchAllRecordsFromFirst();
-      let filtered = records;
+      const { label, serialNumber, records } = await fetchSessionFromFirst();
+      const hidden = await getHiddenHashes(serialNumber);
+      const visible: MeterRecord[] = [];
+
+      for (const record of records) {
+        const hash = await hashReading(serialNumber, record);
+        if (!hidden.has(hash)) {
+          visible.push(record);
+        }
+      }
+
+      let filtered = visible;
       if (kind && kind !== "all") {
-        filtered = records.filter((r) => r.kind === kind);
+        filtered = visible.filter((r) => r.kind === kind);
       }
 
       return json({
         label,
+        serialNumber,
         count: filtered.length,
-        records: filtered.map(serializeRecord),
+        totalOnDevice: records.length,
+        hiddenCount: hidden.size,
+        records: await Promise.all(
+          filtered.map((record) => serializeRecord(serialNumber, record)),
+        ),
       });
     } catch (e) {
       return mapDeviceError(e);
     }
   });
+}
+
+async function handleApiHideOne(request: Request): Promise<Response> {
+  let body: { hash?: string; serialNumber?: string };
+  try {
+    body = await request.json();
+  } catch {
+    return error("Invalid JSON body", 400);
+  }
+
+  if (!body.hash?.trim()) {
+    return error("Missing hash field", 400);
+  }
+  if (!body.serialNumber?.trim()) {
+    return error("Missing serialNumber field", 400);
+  }
+
+  try {
+    const hiddenCount = await hideHashes(body.serialNumber.trim(), [body.hash.trim()]);
+    return json({ ok: true, hiddenCount });
+  } catch (e) {
+    return mapDeviceError(e);
+  }
+}
+
+async function handleApiHideAll(): Promise<Response> {
+  return withDeviceLock(async () => {
+    try {
+      const { serialNumber, records } = await fetchSessionFromFirst();
+      const hidden = await getHiddenHashes(serialNumber);
+      const newHashes: string[] = [];
+
+      for (const record of records) {
+        const hash = await hashReading(serialNumber, record);
+        if (!hidden.has(hash)) {
+          newHashes.push(hash);
+        }
+      }
+
+      const hiddenCount = await hideHashes(serialNumber, newHashes);
+      return json({ ok: true, hiddenCount, newlyHidden: newHashes.length });
+    } catch (e) {
+      return mapDeviceError(e);
+    }
+  });
+}
+
+async function handleApiRestoreHidden(request: Request): Promise<Response> {
+  let body: { serialNumber?: string };
+  try {
+    body = await request.json();
+  } catch {
+    return error("Invalid JSON body", 400);
+  }
+
+  if (!body.serialNumber?.trim()) {
+    return error("Missing serialNumber field", 400);
+  }
+
+  try {
+    const restoredCount = await clearHidden(body.serialNumber.trim());
+    return json({ ok: true, restoredCount });
+  } catch (e) {
+    return mapDeviceError(e);
+  }
 }
 
 async function handleApiDateTime(request: Request): Promise<Response> {
@@ -146,43 +232,7 @@ async function handleApiPatient(request: Request): Promise<Response> {
   });
 }
 
-async function handleApiDeleteAll(): Promise<Response> {
-  return withDeviceLock(async () => {
-    try {
-      await deleteAllRecordsFromFirst();
-      return json({ ok: true });
-    } catch (e) {
-      return mapDeviceError(e);
-    }
-  });
-}
-
-async function handleApiDeleteOne(request: Request): Promise<Response> {
-  let body: { id?: number; recordType?: number };
-  try {
-    body = await request.json();
-  } catch {
-    return error("Invalid JSON body", 400);
-  }
-
-  if (body.id === undefined || body.recordType === undefined) {
-    return error("Missing id or recordType field", 400);
-  }
-
-  return withDeviceLock(async () => {
-    try {
-      await deleteRecordFromFirst(body.id!, body.recordType!);
-      return json({ ok: true });
-    } catch (e) {
-      return mapDeviceError(e);
-    }
-  });
-}
-
 function mapDeviceError(e: unknown): Response {
-  if (e instanceof DeleteNotSupported) {
-    return error(e.message, 501);
-  }
   if (e instanceof DeviceNotConnected || e instanceof DeviceInvalid) {
     return error(
       "Device not responding. Make sure it is connected and awake.",
@@ -227,11 +277,14 @@ const server = Bun.serve({
       if (request.method === "POST" && url.pathname === "/api/device/patient") {
         return handleApiPatient(request);
       }
-      if (request.method === "POST" && url.pathname === "/api/readings/delete-all") {
-        return handleApiDeleteAll();
+      if (request.method === "POST" && url.pathname === "/api/readings/hide") {
+        return handleApiHideOne(request);
       }
-      if (request.method === "POST" && url.pathname === "/api/readings/delete") {
-        return handleApiDeleteOne(request);
+      if (request.method === "POST" && url.pathname === "/api/readings/hide-all") {
+        return handleApiHideAll();
+      }
+      if (request.method === "POST" && url.pathname === "/api/readings/restore-hidden") {
+        return handleApiRestoreHidden(request);
       }
       return error("Not found", 404);
     }

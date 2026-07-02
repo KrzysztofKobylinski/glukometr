@@ -4,8 +4,9 @@ const readingsBody = document.getElementById("readings-body");
 const readingsHead = document.getElementById("readings-head");
 const readingStats = document.getElementById("reading-stats");
 const refreshBtn = document.getElementById("refresh-readings");
-const deleteAllBtn = document.getElementById("delete-all-readings");
-const deleteNotice = document.getElementById("delete-notice");
+const hideAllBtn = document.getElementById("hide-all-readings");
+const restoreHiddenBtn = document.getElementById("restore-hidden");
+const hiddenCountLabel = document.getElementById("hidden-count-label");
 const datetimeForm = document.getElementById("datetime-form");
 const patientForm = document.getElementById("patient-form");
 const syncClockBtn = document.getElementById("sync-clock");
@@ -19,7 +20,8 @@ const paginationInfo = document.getElementById("pagination-info");
 
 let activeKind = "glucose";
 let allRecords = [];
-let deviceCapabilities = { deleteAll: false, deleteOne: false };
+let deviceSerial = "";
+let hiddenCount = 0;
 let currentPage = 1;
 let pageSize = 50;
 
@@ -60,17 +62,13 @@ function glucoseClass(value) {
   return "normal";
 }
 
-function updateDeleteControls() {
-  deleteAllBtn.title = deviceCapabilities.deleteAll
-    ? "Delete all readings from the device"
-    : "May not be supported on this meter — will attempt known protocol commands";
-
-  if (!deviceCapabilities.deleteAll && !deviceCapabilities.deleteOne) {
-    deleteNotice.textContent =
-      "This meter likely does not support deleting readings over USB. You can still try — if it fails, clear memory from the device menu.";
+function updateHiddenLabel() {
+  if (hiddenCount > 0) {
+    hiddenCountLabel.textContent = `(${hiddenCount} hidden locally)`;
+    restoreHiddenBtn.disabled = false;
   } else {
-    deleteNotice.textContent =
-      "Deleting readings permanently removes them from the device.";
+    hiddenCountLabel.textContent = "";
+    restoreHiddenBtn.disabled = true;
   }
 }
 
@@ -97,9 +95,13 @@ function renderDeviceInfo(info) {
     clockEl.classList.remove("warn");
   }
 
-  if (info.capabilities) {
-    deviceCapabilities = info.capabilities;
-    updateDeleteControls();
+  if (info.serialNumber) {
+    deviceSerial = info.serialNumber;
+  }
+
+  if (typeof info.hiddenCount === "number") {
+    hiddenCount = info.hiddenCount;
+    updateHiddenLabel();
   }
 
   if (info.patientName) {
@@ -140,14 +142,14 @@ function renderStats(records) {
   }
 }
 
-function deleteButton(record) {
-  if (record.id === undefined) return "";
-  return `<button type="button" class="btn danger secondary small delete-one" data-id="${record.id}" data-type="${record.recordType}">Delete</button>`;
+function hideButton(record) {
+  if (!record.hash) return "";
+  return `<button type="button" class="btn danger secondary small hide-one" data-hash="${record.hash}">Hide</button>`;
 }
 
 function renderTable(records) {
-  const showDelete = true;
-  const actionCol = showDelete ? 1 : 0;
+  const showHide = true;
+  const actionCol = showHide ? 1 : 0;
 
   if (activeKind === "insulin") {
     readingsHead.innerHTML = `
@@ -156,7 +158,7 @@ function renderTable(records) {
         <th>Type</th>
         <th>Date</th>
         <th>Time</th>
-        ${showDelete ? "<th></th>" : ""}
+        ${showHide ? "<th></th>" : ""}
       </tr>`;
   } else if (activeKind === "ketone") {
     readingsHead.innerHTML = `
@@ -165,7 +167,7 @@ function renderTable(records) {
         <th>mmol/L</th>
         <th>Date</th>
         <th>Time</th>
-        ${showDelete ? "<th></th>" : ""}
+        ${showHide ? "<th></th>" : ""}
       </tr>`;
   } else if (activeKind === "all") {
     readingsHead.innerHTML = `
@@ -174,7 +176,7 @@ function renderTable(records) {
         <th>Value</th>
         <th>Date</th>
         <th>Time</th>
-        ${showDelete ? "<th></th>" : ""}
+        ${showHide ? "<th></th>" : ""}
       </tr>`;
   } else {
     readingsHead.innerHTML = `
@@ -182,7 +184,7 @@ function renderTable(records) {
         <th>Value (mg/dL)</th>
         <th>Date</th>
         <th>Time</th>
-        ${showDelete ? "<th></th>" : ""}
+        ${showHide ? "<th></th>" : ""}
       </tr>`;
   }
 
@@ -199,7 +201,7 @@ function renderTable(records) {
   readingsBody.innerHTML = pageRecords
     .map((record) => {
       const { date, time } = formatDateTime(record.date);
-      const action = showDelete ? `<td>${deleteButton(record)}</td>` : "";
+      const action = showHide ? `<td>${hideButton(record)}</td>` : "";
 
       if (record.kind === "glucose") {
         if (activeKind === "all") {
@@ -243,9 +245,9 @@ function renderTable(records) {
     })
     .join("");
 
-  document.querySelectorAll(".delete-one").forEach((button) => {
+  document.querySelectorAll(".hide-one").forEach((button) => {
     button.addEventListener("click", () => {
-      deleteOneRecord(Number(button.dataset.id), Number(button.dataset.type));
+      hideOneRecord(button.dataset.hash);
     });
   });
 }
@@ -312,6 +314,13 @@ async function loadReadings() {
   try {
     const data = await api("/api/readings?kind=all");
     allRecords = data.records;
+    if (data.serialNumber) {
+      deviceSerial = data.serialNumber;
+    }
+    if (typeof data.hiddenCount === "number") {
+      hiddenCount = data.hiddenCount;
+      updateHiddenLabel();
+    }
     currentPage = 1;
     renderReadingsView();
     clearError();
@@ -320,16 +329,16 @@ async function loadReadings() {
   }
 }
 
-async function deleteOneRecord(id, recordType) {
-  if (!confirm(`Delete reading #${id} from the device? This cannot be undone.`)) {
+async function hideOneRecord(hash) {
+  if (!confirm("Hide this reading from the list? It will still be stored on the meter.")) {
     return;
   }
 
   try {
-    await api("/api/readings/delete", {
+    await api("/api/readings/hide", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, recordType }),
+      body: JSON.stringify({ hash, serialNumber: deviceSerial }),
     });
     await loadReadings();
     clearError();
@@ -338,24 +347,47 @@ async function deleteOneRecord(id, recordType) {
   }
 }
 
-async function deleteAllRecords() {
+async function hideAllRecords() {
   if (
     !confirm(
-      "Delete ALL readings from the device? This permanently clears the meter memory and cannot be undone.",
+      "Hide ALL readings from the list? They will remain stored on the meter.",
     )
   ) {
     return;
   }
 
-  deleteAllBtn.disabled = true;
+  hideAllBtn.disabled = true;
   try {
-    await api("/api/readings/delete-all", { method: "POST" });
+    await api("/api/readings/hide-all", { method: "POST" });
     await loadReadings();
     clearError();
   } catch (err) {
     showError(err.message);
   } finally {
-    deleteAllBtn.disabled = false;
+    hideAllBtn.disabled = false;
+  }
+}
+
+async function restoreHidden() {
+  if (hiddenCount === 0) {
+    return;
+  }
+
+  if (!confirm(`Show all ${hiddenCount} hidden readings again?`)) {
+    return;
+  }
+
+  try {
+    await api("/api/readings/restore-hidden", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ serialNumber: deviceSerial }),
+    });
+    await loadDeviceInfo();
+    await loadReadings();
+    clearError();
+  } catch (err) {
+    showError(err.message);
   }
 }
 
@@ -417,8 +449,12 @@ refreshBtn.addEventListener("click", () => {
   loadReadings().catch((e) => showError(e.message));
 });
 
-deleteAllBtn.addEventListener("click", () => {
-  deleteAllRecords().catch((e) => showError(e.message));
+hideAllBtn.addEventListener("click", () => {
+  hideAllRecords().catch((e) => showError(e.message));
+});
+
+restoreHiddenBtn.addEventListener("click", () => {
+  restoreHidden().catch((e) => showError(e.message));
 });
 
 syncClockBtn.addEventListener("click", () => {

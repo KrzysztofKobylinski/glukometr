@@ -321,6 +321,10 @@ input {
   margin: 0;
 }
 
+.sidebar .btn {
+  width: 100%;
+}
+
 .pagination {
   display: flex;
   align-items: center;

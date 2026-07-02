@@ -68,16 +68,18 @@
           </form>
         </section>
 
-        <p class="notice" id="delete-notice">
-          Delete support depends on your meter model. If unsupported, use the device menu to clear memory.
+        <p class="notice" id="hide-notice">
+          Hide removes readings from this app only — they remain on the meter.
+          <span id="hidden-count-label"></span>
         </p>
+        <button type="button" id="restore-hidden" class="btn secondary" disabled>Show hidden readings</button>
       </div>
 
       <section class="card readings">
         <div class="card-header">
           <h2>Readings</h2>
           <div class="header-actions">
-            <button type="button" id="delete-all-readings" class="btn danger">Delete all</button>
+            <button type="button" id="hide-all-readings" class="btn danger">Hide all</button>
             <button type="button" id="refresh-readings" class="btn">Refresh</button>
           </div>
         </div>

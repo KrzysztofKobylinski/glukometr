@@ -4,11 +4,6 @@ export type GlucoseReading = {
   date: Date;
 };
 
-export type DeviceCapabilities = {
-  deleteAll: boolean;
-  deleteOne: boolean;
-};
-
 export type DeviceInfo = {
   label: string;
   serialNumber: string;
@@ -19,7 +14,6 @@ export type DeviceInfo = {
   patientId?: string;
   clockValid: boolean;
   date?: Date;
-  capabilities?: DeviceCapabilities;
 };
 
 type RecordBase = {
@@ -41,11 +35,8 @@ export interface GlucometerDevice {
   fetchData(): Promise<GlucoseReading[]> | GlucoseReading[];
   fetchAllRecords?(): Promise<MeterRecord[]> | MeterRecord[];
   getInfo?(): Promise<DeviceInfo> | DeviceInfo;
-  getCapabilities?(): DeviceCapabilities;
   setDateTime?(date: Date): Promise<void> | void;
   setPatient?(name: string, id?: string): Promise<void> | void;
-  deleteAllRecords?(): Promise<void> | void;
-  deleteRecord?(id: number, recordType: number): Promise<void> | void;
   close(): void;
 }
 
