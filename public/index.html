@@ -4,16 +4,26 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Glukometr</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <main>
-    <header>
-      <h1>Glukometr</h1>
-      <p class="meta" id="status">Connecting to device…</p>
+    <header class="site-header">
+      <div class="header-brand">
+        <h1>Glukometr</h1>
+        <p class="meta" id="status-text">Connecting to device…</p>
+      </div>
+      <div class="status-pill" id="status-pill" data-state="loading">
+        <span class="status-dot"></span>
+        <span id="status">Connecting…</span>
+      </div>
     </header>
 
     <div id="error-banner" class="banner error hidden"></div>
+    <div id="toast" class="toast hidden"></div>
 
     <div class="layout">
       <div class="sidebar">
@@ -76,19 +86,49 @@
       </div>
 
       <section class="card readings">
-        <div class="card-header">
-          <h2>Readings</h2>
-          <div class="header-actions">
-            <button type="button" id="hide-all-readings" class="btn danger">Hide all</button>
-            <button type="button" id="refresh-readings" class="btn">Refresh</button>
+        <div class="readings-sticky">
+          <div class="card-header">
+            <h2>Readings</h2>
+            <div class="header-actions">
+              <button type="button" id="hide-all-readings" class="btn danger">Hide all</button>
+              <button type="button" id="refresh-readings" class="btn">
+                <span class="btn-icon refresh-icon" aria-hidden="true">↻</span>
+                Refresh
+              </button>
+            </div>
+          </div>
+
+          <div class="tabs" role="tablist" id="tabs">
+            <button type="button" class="tab active" data-kind="glucose">Glucose</button>
+            <button type="button" class="tab" data-kind="ketone">Ketones</button>
+            <button type="button" class="tab" data-kind="insulin">Insulin</button>
+            <button type="button" class="tab" data-kind="all">All</button>
           </div>
         </div>
 
-        <div class="tabs" role="tablist">
-          <button type="button" class="tab active" data-kind="glucose">Glucose</button>
-          <button type="button" class="tab" data-kind="ketone">Ketones</button>
-          <button type="button" class="tab" data-kind="insulin">Insulin</button>
-          <button type="button" class="tab" data-kind="all">All</button>
+        <div class="hero-panel hidden" id="hero-panel">
+          <div class="hero-value-wrap">
+            <span class="hero-value" id="hero-value">—</span>
+            <span class="hero-unit">mg/dL</span>
+          </div>
+          <p class="hero-meta" id="hero-meta">Latest reading</p>
+        </div>
+
+        <div class="chart-panel" id="chart-panel">
+          <div class="chart-header">
+            <span class="chart-title">Glucose trend</span>
+            <span class="chart-range" id="chart-range">Last 30 readings</span>
+          </div>
+          <div class="chart-canvas-wrap">
+            <svg id="glucose-chart" viewBox="0 0 800 160" preserveAspectRatio="none" role="img" aria-label="Glucose trend chart"></svg>
+            <p class="chart-empty hidden" id="chart-empty">No glucose data to chart</p>
+          </div>
+        </div>
+
+        <div class="range-legend" id="range-legend">
+          <span class="legend-item low">Below 70</span>
+          <span class="legend-item normal">70–140</span>
+          <span class="legend-item high">Above 140</span>
         </div>
 
         <div class="stats" id="reading-stats"></div>
@@ -103,7 +143,9 @@
               </tr>
             </thead>
             <tbody id="readings-body">
-              <tr><td colspan="3">Loading…</td></tr>
+              <tr class="skeleton-row"><td colspan="4"><span class="skeleton"></span></td></tr>
+              <tr class="skeleton-row"><td colspan="4"><span class="skeleton"></span></td></tr>
+              <tr class="skeleton-row"><td colspan="4"><span class="skeleton"></span></td></tr>
             </tbody>
           </table>
         </div>
@@ -129,6 +171,17 @@
       </section>
     </div>
   </main>
+
+  <div class="modal-overlay hidden" id="modal-overlay">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <h3 id="modal-title">Confirm</h3>
+      <p id="modal-message"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn secondary" id="modal-cancel">Cancel</button>
+        <button type="button" class="btn danger" id="modal-confirm">Confirm</button>
+      </div>
+    </div>
+  </div>
 
   <script src="/app.js" type="module"></script>
 </body>
