@@ -4,12 +4,24 @@ const readingsBody = document.getElementById("readings-body");
 const readingsHead = document.getElementById("readings-head");
 const readingStats = document.getElementById("reading-stats");
 const refreshBtn = document.getElementById("refresh-readings");
+const deleteAllBtn = document.getElementById("delete-all-readings");
+const deleteNotice = document.getElementById("delete-notice");
 const datetimeForm = document.getElementById("datetime-form");
 const patientForm = document.getElementById("patient-form");
 const syncClockBtn = document.getElementById("sync-clock");
+const pageSizeSelect = document.getElementById("page-size");
+const pageFirstBtn = document.getElementById("page-first");
+const pagePrevBtn = document.getElementById("page-prev");
+const pageNextBtn = document.getElementById("page-next");
+const pageLastBtn = document.getElementById("page-last");
+const pageIndicator = document.getElementById("page-indicator");
+const paginationInfo = document.getElementById("pagination-info");
 
 let activeKind = "glucose";
 let allRecords = [];
+let deviceCapabilities = { deleteAll: false, deleteOne: false };
+let currentPage = 1;
+let pageSize = 50;
 
 function showError(message) {
   errorBanner.textContent = message;
@@ -48,6 +60,20 @@ function glucoseClass(value) {
   return "normal";
 }
 
+function updateDeleteControls() {
+  deleteAllBtn.title = deviceCapabilities.deleteAll
+    ? "Delete all readings from the device"
+    : "May not be supported on this meter — will attempt known protocol commands";
+
+  if (!deviceCapabilities.deleteAll && !deviceCapabilities.deleteOne) {
+    deleteNotice.textContent =
+      "This meter likely does not support deleting readings over USB. You can still try — if it fails, clear memory from the device menu.";
+  } else {
+    deleteNotice.textContent =
+      "Deleting readings permanently removes them from the device.";
+  }
+}
+
 function renderDeviceInfo(info) {
   document.getElementById("info-label").textContent = info.label || "—";
   document.getElementById("info-serial").textContent = info.serialNumber || "—";
@@ -69,6 +95,11 @@ function renderDeviceInfo(info) {
   } else {
     clockEl.textContent = "—";
     clockEl.classList.remove("warn");
+  }
+
+  if (info.capabilities) {
+    deviceCapabilities = info.capabilities;
+    updateDeleteControls();
   }
 
   if (info.patientName) {
@@ -109,7 +140,15 @@ function renderStats(records) {
   }
 }
 
+function deleteButton(record) {
+  if (record.id === undefined) return "";
+  return `<button type="button" class="btn danger secondary small delete-one" data-id="${record.id}" data-type="${record.recordType}">Delete</button>`;
+}
+
 function renderTable(records) {
+  const showDelete = true;
+  const actionCol = showDelete ? 1 : 0;
+
   if (activeKind === "insulin") {
     readingsHead.innerHTML = `
       <tr>
@@ -117,6 +156,7 @@ function renderTable(records) {
         <th>Type</th>
         <th>Date</th>
         <th>Time</th>
+        ${showDelete ? "<th></th>" : ""}
       </tr>`;
   } else if (activeKind === "ketone") {
     readingsHead.innerHTML = `
@@ -125,6 +165,7 @@ function renderTable(records) {
         <th>mmol/L</th>
         <th>Date</th>
         <th>Time</th>
+        ${showDelete ? "<th></th>" : ""}
       </tr>`;
   } else if (activeKind === "all") {
     readingsHead.innerHTML = `
@@ -133,6 +174,7 @@ function renderTable(records) {
         <th>Value</th>
         <th>Date</th>
         <th>Time</th>
+        ${showDelete ? "<th></th>" : ""}
       </tr>`;
   } else {
     readingsHead.innerHTML = `
@@ -140,21 +182,24 @@ function renderTable(records) {
         <th>Value (mg/dL)</th>
         <th>Date</th>
         <th>Time</th>
+        ${showDelete ? "<th></th>" : ""}
       </tr>`;
   }
 
+  const colSpan = (activeKind === "all" ? 4 : activeKind === "insulin" || activeKind === "ketone" ? 4 : 3) + actionCol;
+
   if (records.length === 0) {
-    readingsBody.innerHTML = `<tr><td colspan="4">No readings found.</td></tr>`;
+    readingsBody.innerHTML = `<tr><td colspan="${colSpan}">No readings found.</td></tr>`;
     return;
   }
 
-  const sorted = [...records].sort(
-    (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
-  );
+  const sorted = getSortedRecords(records);
+  const pageRecords = sorted.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
-  readingsBody.innerHTML = sorted
+  readingsBody.innerHTML = pageRecords
     .map((record) => {
       const { date, time } = formatDateTime(record.date);
+      const action = showDelete ? `<td>${deleteButton(record)}</td>` : "";
 
       if (record.kind === "glucose") {
         if (activeKind === "all") {
@@ -163,12 +208,14 @@ function renderTable(records) {
             <td class="value ${glucoseClass(record.value)}">${record.value} mg/dL</td>
             <td>${date}</td>
             <td>${time}</td>
+            ${action}
           </tr>`;
         }
         return `<tr>
           <td class="value ${glucoseClass(record.value)}">${record.value}</td>
           <td>${date}</td>
           <td>${time}</td>
+          ${action}
         </tr>`;
       }
 
@@ -178,6 +225,7 @@ function renderTable(records) {
           <td>${record.valueMmolL ?? (record.valueMgDl / 18).toFixed(2)}</td>
           <td>${date}</td>
           <td>${time}</td>
+          ${action}
         </tr>`;
       }
 
@@ -187,17 +235,70 @@ function renderTable(records) {
           <td>${record.insulinType}</td>
           <td>${date}</td>
           <td>${time}</td>
+          ${action}
         </tr>`;
       }
 
       return "";
     })
     .join("");
+
+  document.querySelectorAll(".delete-one").forEach((button) => {
+    button.addEventListener("click", () => {
+      deleteOneRecord(Number(button.dataset.id), Number(button.dataset.type));
+    });
+  });
 }
 
 function filterRecords() {
   if (activeKind === "all") return allRecords;
   return allRecords.filter((r) => r.kind === activeKind);
+}
+
+function getSortedRecords(records) {
+  return [...records].sort(
+    (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+  );
+}
+
+function getPageCount(total) {
+  return Math.max(1, Math.ceil(total / pageSize));
+}
+
+function clampPage(page, total) {
+  return Math.min(Math.max(1, page), getPageCount(total));
+}
+
+function renderPagination(total) {
+  const pageCount = getPageCount(total);
+
+  if (total === 0) {
+    paginationInfo.textContent = "No readings";
+    pageIndicator.textContent = "—";
+    pageFirstBtn.disabled = true;
+    pagePrevBtn.disabled = true;
+    pageNextBtn.disabled = true;
+    pageLastBtn.disabled = true;
+    return;
+  }
+
+  const start = (currentPage - 1) * pageSize + 1;
+  const end = Math.min(currentPage * pageSize, total);
+  paginationInfo.textContent = `Showing ${start}–${end} of ${total}`;
+  pageIndicator.textContent = `${currentPage} / ${pageCount}`;
+
+  pageFirstBtn.disabled = currentPage <= 1;
+  pagePrevBtn.disabled = currentPage <= 1;
+  pageNextBtn.disabled = currentPage >= pageCount;
+  pageLastBtn.disabled = currentPage >= pageCount;
+}
+
+function renderReadingsView() {
+  const filtered = filterRecords();
+  currentPage = clampPage(currentPage, filtered.length);
+  renderStats(filtered);
+  renderTable(filtered);
+  renderPagination(filtered.length);
 }
 
 async function loadDeviceInfo() {
@@ -211,12 +312,50 @@ async function loadReadings() {
   try {
     const data = await api("/api/readings?kind=all");
     allRecords = data.records;
-    const filtered = filterRecords();
-    renderStats(filtered);
-    renderTable(filtered);
+    currentPage = 1;
+    renderReadingsView();
     clearError();
   } finally {
     refreshBtn.disabled = false;
+  }
+}
+
+async function deleteOneRecord(id, recordType) {
+  if (!confirm(`Delete reading #${id} from the device? This cannot be undone.`)) {
+    return;
+  }
+
+  try {
+    await api("/api/readings/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, recordType }),
+    });
+    await loadReadings();
+    clearError();
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+async function deleteAllRecords() {
+  if (
+    !confirm(
+      "Delete ALL readings from the device? This permanently clears the meter memory and cannot be undone.",
+    )
+  ) {
+    return;
+  }
+
+  deleteAllBtn.disabled = true;
+  try {
+    await api("/api/readings/delete-all", { method: "POST" });
+    await loadReadings();
+    clearError();
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    deleteAllBtn.disabled = false;
   }
 }
 
@@ -242,14 +381,44 @@ document.querySelectorAll(".tab").forEach((tab) => {
     document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
     tab.classList.add("active");
     activeKind = tab.dataset.kind;
-    const filtered = filterRecords();
-    renderStats(filtered);
-    renderTable(filtered);
+    currentPage = 1;
+    renderReadingsView();
   });
+});
+
+pageSizeSelect.addEventListener("change", () => {
+  pageSize = Number(pageSizeSelect.value);
+  currentPage = 1;
+  renderReadingsView();
+});
+
+pageFirstBtn.addEventListener("click", () => {
+  currentPage = 1;
+  renderReadingsView();
+});
+
+pagePrevBtn.addEventListener("click", () => {
+  currentPage -= 1;
+  renderReadingsView();
+});
+
+pageNextBtn.addEventListener("click", () => {
+  currentPage += 1;
+  renderReadingsView();
+});
+
+pageLastBtn.addEventListener("click", () => {
+  const total = filterRecords().length;
+  currentPage = getPageCount(total);
+  renderReadingsView();
 });
 
 refreshBtn.addEventListener("click", () => {
   loadReadings().catch((e) => showError(e.message));
+});
+
+deleteAllBtn.addEventListener("click", () => {
+  deleteAllRecords().catch((e) => showError(e.message));
 });
 
 syncClockBtn.addEventListener("click", () => {

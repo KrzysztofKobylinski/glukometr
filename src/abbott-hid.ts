@@ -1,6 +1,12 @@
 import HID from "node-hid";
-import { DeviceInvalid, DeviceNotConnected, GlucometerError } from "./errors.ts";
+import { DeleteNotSupported, DeviceInvalid, DeviceNotConnected, GlucometerError } from "./errors.ts";
+import {
+  deleteAllCommands,
+  deleteOneCommands,
+  tryTextCommand,
+} from "./delete-commands.ts";
 import type {
+  DeviceCapabilities,
   DeviceInfo,
   GlucoseReading,
   GlucometerDevice,
@@ -186,6 +192,18 @@ class AbbottHidSession {
     return this.sendTextCommandRaw(Buffer.from(command)).toString("ascii").trim();
   }
 
+  tryTextCommand(command: string): boolean {
+    try {
+      this.sendTextCommandRaw(Buffer.from(command));
+      return true;
+    } catch (error) {
+      if (error instanceof DeviceInvalid) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
   queryMultirecord(command: Buffer): string[][] {
     const message = this.sendTextCommandRaw(command);
     if (message.equals(Buffer.from("Log Empty\r\n"))) {
@@ -234,25 +252,28 @@ function parseCsvLine(line: string): string[] {
 function parseMeterRecord(record: string[]): MeterRecord | null {
   if (!record.length) return null;
 
+  const id = Number(record[1]);
+  const recordType = Number(record[0]);
   const date = parseRecordDate(record);
+  const base = { id, recordType, date };
 
   if (record[0] === GLUCOSE_RECORD_TYPE) {
     const valueText = record[8];
     if (valueText === "HI" || valueText === "LO") return null;
-    return { kind: "glucose", value: Number(valueText), date };
+    return { ...base, kind: "glucose", value: Number(valueText) };
   }
 
   if (record[0] === KETONE_RECORD_TYPE) {
-    return { kind: "ketone", valueMgDl: Number(record[8]), date };
+    return { ...base, kind: "ketone", valueMgDl: Number(record[8]) };
   }
 
   if (record[0] === INSULIN_RECORD_TYPE) {
     const insulinType = INSULIN_TYPE_LABELS[record[8]] ?? `Type ${record[8]}`;
     return {
+      ...base,
       kind: "insulin",
       units: Number(record[9]),
       insulinType,
-      date,
     };
   }
 
@@ -310,6 +331,7 @@ export class FreeStylePrecisionNeo implements GlucometerDevice {
       patientId: patientId || undefined,
       clockValid: clock.clockValid,
       date: clock.date,
+      capabilities: this.getCapabilities(),
     };
   }
 
@@ -332,6 +354,32 @@ export class FreeStylePrecisionNeo implements GlucometerDevice {
     this.session.sendTextCommandRaw(Buffer.from(`$ptname,${name}`));
     if (id !== undefined) {
       this.session.sendTextCommandRaw(Buffer.from(`$ptid,${id}`));
+    }
+  }
+
+  getCapabilities(): DeviceCapabilities {
+    return { deleteAll: false, deleteOne: false };
+  }
+
+  deleteAllRecords(): void {
+    const ok = tryTextCommand(
+      (command) => this.session.tryTextCommand(command),
+      deleteAllCommands(),
+    );
+    if (!ok) {
+      throw new DeleteNotSupported();
+    }
+  }
+
+  deleteRecord(id: number, recordType: number): void {
+    const ok = tryTextCommand(
+      (command) => this.session.tryTextCommand(command),
+      deleteOneCommands(id, recordType),
+    );
+    if (!ok) {
+      throw new DeleteNotSupported(
+        "This device does not support deleting individual readings over USB.",
+      );
     }
   }
 

@@ -1,7 +1,9 @@
 import { SerialPort } from "serialport";
 import { ReadlineParser } from "@serialport/parser-readline";
-import { DeviceInvalid, DeviceNotConnected } from "./errors.ts";
+import { DeleteNotSupported, DeviceInvalid, DeviceNotConnected } from "./errors.ts";
+import { deleteAllCommands } from "./delete-commands.ts";
 import type {
+  DeviceCapabilities,
   DeviceInfo,
   GlucoseReading,
   GlucometerDevice,
@@ -101,11 +103,13 @@ export class OptiumXido implements GlucometerDevice {
       const parts = reading.split(" ");
       const [valueText, month, day, year, time, readingType] = parts;
       const date = parseReadingDate([month, day, year, time]);
+      const id = readings.length + 1;
+      const recordType = readingType === "G" ? 7 : 9;
 
       if (readingType === "G") {
-        records.push({ kind: "glucose", value: Number(valueText), date });
+        records.push({ id, recordType, kind: "glucose", value: Number(valueText), date });
       } else if (readingType === "K") {
-        records.push({ kind: "ketone", valueMgDl: Number(valueText), date });
+        records.push({ id, recordType, kind: "ketone", valueMgDl: Number(valueText), date });
       }
     }
 
@@ -134,7 +138,39 @@ export class OptiumXido implements GlucometerDevice {
       marketLevel: marketMatch ? `${marketMatch[1]},${marketMatch[2]}` : undefined,
       clockValid: clock.clockValid,
       date: clock.date,
+      capabilities: this.getCapabilities(),
     };
+  }
+
+  getCapabilities(): DeviceCapabilities {
+    return { deleteAll: false, deleteOne: false };
+  }
+
+  async deleteAllRecords(): Promise<void> {
+    const ok = await this.tryCommands(deleteAllCommands());
+    if (!ok) {
+      throw new DeleteNotSupported();
+    }
+  }
+
+  async deleteRecord(_id: number, _recordType: number): Promise<void> {
+    throw new DeleteNotSupported(
+      "This device does not support deleting individual readings over USB.",
+    );
+  }
+
+  private async tryCommands(commands: string[]): Promise<boolean> {
+    for (const command of commands) {
+      try {
+        const resp = await this.command(command);
+        if (resp.some((line) => line.includes("CMD OK"))) {
+          return true;
+        }
+      } catch {
+        continue;
+      }
+    }
+    return false;
   }
 
   async setDateTime(date: Date): Promise<void> {

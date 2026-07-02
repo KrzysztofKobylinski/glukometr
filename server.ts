@@ -2,8 +2,11 @@
 
 import { join } from "node:path";
 import {
+  DeleteNotSupported,
   DeviceInvalid,
   DeviceNotConnected,
+  deleteAllRecordsFromFirst,
+  deleteRecordFromFirst,
   fetchAllRecordsFromFirst,
   getDeviceInfoFromFirst,
   listDevices,
@@ -143,7 +146,43 @@ async function handleApiPatient(request: Request): Promise<Response> {
   });
 }
 
+async function handleApiDeleteAll(): Promise<Response> {
+  return withDeviceLock(async () => {
+    try {
+      await deleteAllRecordsFromFirst();
+      return json({ ok: true });
+    } catch (e) {
+      return mapDeviceError(e);
+    }
+  });
+}
+
+async function handleApiDeleteOne(request: Request): Promise<Response> {
+  let body: { id?: number; recordType?: number };
+  try {
+    body = await request.json();
+  } catch {
+    return error("Invalid JSON body", 400);
+  }
+
+  if (body.id === undefined || body.recordType === undefined) {
+    return error("Missing id or recordType field", 400);
+  }
+
+  return withDeviceLock(async () => {
+    try {
+      await deleteRecordFromFirst(body.id!, body.recordType!);
+      return json({ ok: true });
+    } catch (e) {
+      return mapDeviceError(e);
+    }
+  });
+}
+
 function mapDeviceError(e: unknown): Response {
+  if (e instanceof DeleteNotSupported) {
+    return error(e.message, 501);
+  }
   if (e instanceof DeviceNotConnected || e instanceof DeviceInvalid) {
     return error(
       "Device not responding. Make sure it is connected and awake.",
@@ -187,6 +226,12 @@ const server = Bun.serve({
       }
       if (request.method === "POST" && url.pathname === "/api/device/patient") {
         return handleApiPatient(request);
+      }
+      if (request.method === "POST" && url.pathname === "/api/readings/delete-all") {
+        return handleApiDeleteAll();
+      }
+      if (request.method === "POST" && url.pathname === "/api/readings/delete") {
+        return handleApiDeleteOne(request);
       }
       return error("Not found", 404);
     }

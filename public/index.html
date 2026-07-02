@@ -15,92 +15,117 @@
 
     <div id="error-banner" class="banner error hidden"></div>
 
-    <section class="card" id="device-card">
-      <h2>Device</h2>
-      <dl class="info-grid" id="device-info">
-        <dt>Model</dt><dd id="info-label">—</dd>
-        <dt>Serial</dt><dd id="info-serial">—</dd>
-        <dt>Firmware</dt><dd id="info-firmware">—</dd>
-        <dt>Units</dt><dd id="info-units">—</dd>
-        <dt>Patient</dt><dd id="info-patient">—</dd>
-        <dt>Clock</dt><dd id="info-clock">—</dd>
-      </dl>
-    </section>
+    <div class="layout">
+      <div class="sidebar">
+        <section class="card" id="device-card">
+          <h2>Device</h2>
+          <dl class="info-grid" id="device-info">
+            <dt>Model</dt><dd id="info-label">—</dd>
+            <dt>Serial</dt><dd id="info-serial">—</dd>
+            <dt>Firmware</dt><dd id="info-firmware">—</dd>
+            <dt>Units</dt><dd id="info-units">—</dd>
+            <dt>Patient</dt><dd id="info-patient">—</dd>
+            <dt>Clock</dt><dd id="info-clock">—</dd>
+          </dl>
+        </section>
 
-    <section class="card">
-      <div class="card-header">
-        <h2>Readings</h2>
-        <button type="button" id="refresh-readings" class="btn">Refresh</button>
+        <section class="card">
+          <h2>Settings</h2>
+
+          <form id="datetime-form" class="form">
+            <h3>Date &amp; time</h3>
+            <div class="form-row">
+              <label>
+                Date
+                <input type="date" id="set-date" required>
+              </label>
+              <label>
+                Time
+                <input type="time" id="set-time" required>
+              </label>
+            </div>
+            <div class="form-actions">
+              <button type="button" id="sync-clock" class="btn secondary">Sync to computer clock</button>
+              <button type="submit" class="btn">Set on device</button>
+            </div>
+          </form>
+
+          <form id="patient-form" class="form">
+            <h3>Patient</h3>
+            <div class="form-row">
+              <label>
+                Name
+                <input type="text" id="set-patient-name" maxlength="32" required>
+              </label>
+              <label>
+                ID
+                <input type="text" id="set-patient-id" maxlength="32">
+              </label>
+            </div>
+            <div class="form-actions">
+              <button type="submit" class="btn">Set on device</button>
+            </div>
+          </form>
+        </section>
+
+        <p class="notice" id="delete-notice">
+          Delete support depends on your meter model. If unsupported, use the device menu to clear memory.
+        </p>
       </div>
 
-      <div class="tabs" role="tablist">
-        <button type="button" class="tab active" data-kind="glucose">Glucose</button>
-        <button type="button" class="tab" data-kind="ketone">Ketones</button>
-        <button type="button" class="tab" data-kind="insulin">Insulin</button>
-        <button type="button" class="tab" data-kind="all">All</button>
-      </div>
-
-      <div class="stats" id="reading-stats"></div>
-
-      <div class="table-wrap">
-        <table>
-          <thead id="readings-head">
-            <tr>
-              <th>Value</th>
-              <th>Date</th>
-              <th>Time</th>
-            </tr>
-          </thead>
-          <tbody id="readings-body">
-            <tr><td colspan="3">Loading…</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="card">
-      <h2>Settings</h2>
-
-      <form id="datetime-form" class="form">
-        <h3>Date &amp; time</h3>
-        <div class="form-row">
-          <label>
-            Date
-            <input type="date" id="set-date" required>
-          </label>
-          <label>
-            Time
-            <input type="time" id="set-time" required>
-          </label>
+      <section class="card readings">
+        <div class="card-header">
+          <h2>Readings</h2>
+          <div class="header-actions">
+            <button type="button" id="delete-all-readings" class="btn danger">Delete all</button>
+            <button type="button" id="refresh-readings" class="btn">Refresh</button>
+          </div>
         </div>
-        <div class="form-actions">
-          <button type="button" id="sync-clock" class="btn secondary">Sync to computer clock</button>
-          <button type="submit" class="btn">Set on device</button>
-        </div>
-      </form>
 
-      <form id="patient-form" class="form">
-        <h3>Patient</h3>
-        <div class="form-row">
-          <label>
-            Name
-            <input type="text" id="set-patient-name" maxlength="32" required>
-          </label>
-          <label>
-            ID
-            <input type="text" id="set-patient-id" maxlength="32">
-          </label>
+        <div class="tabs" role="tablist">
+          <button type="button" class="tab active" data-kind="glucose">Glucose</button>
+          <button type="button" class="tab" data-kind="ketone">Ketones</button>
+          <button type="button" class="tab" data-kind="insulin">Insulin</button>
+          <button type="button" class="tab" data-kind="all">All</button>
         </div>
-        <div class="form-actions">
-          <button type="submit" class="btn">Set on device</button>
-        </div>
-      </form>
-    </section>
 
-    <p class="notice">
-      Deleting readings or clearing device memory is not supported over USB on this meter.
-      Use the device menu to clear memory manually.
-    </p>
+        <div class="stats" id="reading-stats"></div>
+
+        <div class="table-wrap">
+          <table>
+            <thead id="readings-head">
+              <tr>
+                <th>Value</th>
+                <th>Date</th>
+                <th>Time</th>
+              </tr>
+            </thead>
+            <tbody id="readings-body">
+              <tr><td colspan="3">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="pagination" id="pagination">
+          <div class="pagination-info" id="pagination-info">—</div>
+          <div class="pagination-controls">
+            <label class="page-size-label">
+              Per page
+              <select id="page-size">
+                <option value="25">25</option>
+                <option value="50" selected>50</option>
+                <option value="100">100</option>
+              </select>
+            </label>
+            <button type="button" id="page-first" class="btn secondary small" disabled>First</button>
+            <button type="button" id="page-prev" class="btn secondary small" disabled>Prev</button>
+            <span class="page-indicator" id="page-indicator">1 / 1</span>
+            <button type="button" id="page-next" class="btn secondary small" disabled>Next</button>
+            <button type="button" id="page-last" class="btn secondary small" disabled>Last</button>
+          </div>
+        </div>
+      </section>
+    </div>
   </main>
 
   <script src="/app.js" type="module"></script>

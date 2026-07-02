@@ -6,7 +6,6 @@ Read and manage glucose meter data via CLI or a local web UI.
 
 - Abbott Optium Xido (USB serial)
 - FreeStyle Precision Neo / Optium Neo (USB HID)
-- Diagnosis Diagnostic Gold (USB serial)
 
 ## Requirements
 
@@ -32,8 +31,7 @@ The web UI lets you:
 - Download and browse readings (glucose, ketones, insulin)
 - Set date/time on the device
 - Set patient name and ID
-
-Deleting readings or clearing device memory is **not supported** over USB on most meters (including the FreeStyle Neo).
+- Attempt to delete readings (supported on some meters; FreeStyle Neo does not support this over USB)
 
 ## CLI export
 
