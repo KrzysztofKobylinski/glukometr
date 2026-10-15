@@ -3,3 +3,4 @@ node_modules/
 readings.html
 readings.csv
 hidden-readings.json
+.DS_Store
